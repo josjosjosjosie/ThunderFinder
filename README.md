@@ -25,15 +25,10 @@ That's (almost) all it does if you wanna see or change what it all does check th
 
 
 
-How to install and execute:
-Go to command prompt.
+How to install and execute on Windows: download and run the exe
 
-In the terminal type "python3 --version" If you don't see "Python x.xx.x" (Python + version number) or something like that then go ahead and install python. Visit https://python.org/ for more information
 
-If python is installed, type in the command prompt: "pip install --upgrade pip" to install the latest version of pip
-After pip has installed the latest version, enter: "pip install opencv-python" after that is done type: "pip install sounddevice"
-Download or go to the py file, once your in the folder where the py file is located (with Windows Explorer) right click and click on open in terminal. and type the following: "python3 ThunderFinder.py" and press enter. The program has executed! Now it may ask for your camera access so allow that (don't worry it isn't stored) and before starting first use something like a flashlight to activate the microphone so you can allow that. This is one time only. Now you can reopen the program and start using it! 
+Linux users use wine or something or run the py file
 
-Linux users will figure it out :( sorry i don't know linux that good ):
 
-Mac users i'm also sorry.
+Mac users use an emulator i guess.
