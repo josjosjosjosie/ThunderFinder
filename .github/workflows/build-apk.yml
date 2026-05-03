@@ -37,7 +37,7 @@ jobs:
       - name: Accept Android SDK licences
         run: yes | sdkmanager --licenses || true
 
-      # ── 5. Install Pillow for icon resizing ───────────────────────────────
+      # ── 5. Install Pillow ─────────────────────────────────────────────────
       - name: Install Pillow
         run: pip install Pillow --break-system-packages
 
@@ -156,16 +156,20 @@ jobs:
           }
           EOF
 
-      # ── 12. Replace launcher icons using Pillow ───────────────────────────
-      - name: Replace launcher icons
+      # ── 12. Replace ALL icons including adaptive icon layers ───────────────
+      #        Capacitor uses adaptive icons (ic_launcher_foreground + background)
+      #        which override the plain PNGs. We must replace everything AND
+      #        delete the XML-based adaptive icon definitions.
+      - name: Replace all launcher icons
         run: |
           python3 << 'PYEOF'
           from PIL import Image
-          import os
+          import os, shutil
 
           src = "www/icon.png"
           img = Image.open(src).convert("RGBA")
 
+          # Standard mipmap densities → sizes for ic_launcher & ic_launcher_round
           densities = {
               "mdpi":    48,
               "hdpi":    72,
@@ -174,13 +178,50 @@ jobs:
               "xxxhdpi": 192,
           }
 
+          # Foreground of adaptive icon should be larger (108dp = 1.5x the icon size)
+          foreground_sizes = {
+              "mdpi":    108,
+              "hdpi":    162,
+              "xhdpi":   216,
+              "xxhdpi":  324,
+              "xxxhdpi": 432,
+          }
+
+          res_dir = "android/app/src/main/res"
+
           for density, size in densities.items():
-              folder = f"android/app/src/main/res/mipmap-{density}"
+              folder = f"{res_dir}/mipmap-{density}"
               os.makedirs(folder, exist_ok=True)
+
               resized = img.resize((size, size), Image.LANCZOS)
               resized.save(f"{folder}/ic_launcher.png")
               resized.save(f"{folder}/ic_launcher_round.png")
-              print(f"Saved {density} ({size}x{size})")
+
+              # Replace the foreground layer used by adaptive icons
+              fg_size = foreground_sizes[density]
+              # Put logo on transparent background at adaptive icon canvas size
+              canvas = Image.new("RGBA", (fg_size, fg_size), (0, 0, 0, 0))
+              logo = img.resize((fg_size, fg_size), Image.LANCZOS)
+              canvas.paste(logo, (0, 0), logo)
+              canvas.save(f"{folder}/ic_launcher_foreground.png")
+
+              print(f"Done {density}: launcher={size}px foreground={fg_size}px")
+
+          # Delete the XML adaptive icon files — they reference vector drawables
+          # that would override our PNGs
+          for xml_file in [
+              f"{res_dir}/mipmap-anydpi-v26/ic_launcher.xml",
+              f"{res_dir}/mipmap-anydpi-v26/ic_launcher_round.xml",
+          ]:
+              if os.path.exists(xml_file):
+                  os.remove(xml_file)
+                  print(f"Removed adaptive icon XML: {xml_file}")
+
+          # Also remove the anydpi-v26 folder if empty
+          anydpi_dir = f"{res_dir}/mipmap-anydpi-v26"
+          if os.path.exists(anydpi_dir) and not os.listdir(anydpi_dir):
+              shutil.rmtree(anydpi_dir)
+              print("Removed empty mipmap-anydpi-v26 folder")
 
           print("All icons replaced successfully.")
           PYEOF
