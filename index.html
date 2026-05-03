@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ThunderStrike Tracker</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+
+        :root {
+            --bg-dark: #0a0a0c;
+            --panel-dark: #16161a;
+            --electric-yellow: #eaff00;
+            --danger-red: #ff3333;
+            --safe-green: #00ff66;
+            --text-light: #f4f4f5;
+            --text-dim: #a1a1aa;
+            --border-heavy: 4px solid var(--text-light);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Space Mono', monospace;
+            text-transform: uppercase;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-light);
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Scanline Overlay for aesthetic */
+        body::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 999;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        .screen {
+            display: none;
+            flex-direction: column;
+            height: 100%;
+            width: 100%;
+            padding: 20px;
+            animation: glitchFade 0.3s ease-out forwards;
+        }
+
+        .screen.active {
+            display: flex;
+        }
+
+        @keyframes glitchFade {
+            0% { opacity: 0; transform: scale(0.98) translateY(10px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            line-height: 1;
+            margin-bottom: 2rem;
+            text-shadow: 2px 2px 0px var(--electric-yellow);
+            color: var(--bg-dark);
+            -webkit-text-stroke: 1px var(--text-light);
+            letter-spacing: -2px;
+        }
+
+        .btn {
+            background: transparent;
+            color: var(--text-light);
+            border: var(--border-heavy);
+            padding: 1rem;
+            font-size: 1.2rem;
+            font-weight: 700;
+            cursor: pointer;
+            margin-bottom: 1rem;
+            transition: all 0.2s;
+            text-align: center;
+            text-decoration: none;
+            display: block;
+        }
+
+        .btn:active {
+            background: var(--electric-yellow);
+            color: var(--bg-dark);
+            transform: translate(4px, 4px);
+            box-shadow: none;
+        }
+
+        .btn-primary {
+            background: var(--text-light);
+            color: var(--bg-dark);
+            box-shadow: 4px 4px 0px var(--electric-yellow);
+        }
+
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--text-dim);
+            padding-bottom: 0.5rem;
+        }
+
+        /* Video / Tracker View */
+        .camera-container {
+            position: relative;
+            flex-grow: 1;
+            border: var(--border-heavy);
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.6;
+            filter: grayscale(100%) contrast(150%);
+        }
+
+        .overlay-text {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: var(--electric-yellow);
+            color: var(--bg-dark);
+            padding: 2px 8px;
+            font-weight: bold;
+            font-size: 0.8rem;
+        }
+
+        #status-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: 0 0 10px #000;
+            width: 100%;
+            z-index: 10;
+        }
+
+        /* Flash Animation */
+        @keyframes flashEffect {
+            0% { background-color: white; opacity: 1; }
+            100% { background-color: transparent; opacity: 0; }
+        }
+        .flash-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: transparent;
+            pointer-events: none;
+            z-index: 20;
+        }
+        .is-flashing {
+            animation: flashEffect 0.5s ease-out;
+        }
+
+        /* Mic Visualizer */
+        .mic-container {
+            margin-top: 1rem;
+            border: 2px solid var(--text-dim);
+            padding: 10px;
+        }
+
+        .mic-bar-wrapper {
+            height: 20px;
+            width: 100%;
+            background: var(--panel-dark);
+            border: 1px solid var(--text-dim);
+            position: relative;
+        }
+
+        #mic-bar {
+            height: 100%;
+            width: 0%;
+            background: var(--electric-yellow);
+            transition: width 0.1s;
+        }
+
+        #mic-threshold-line {
+            position: absolute;
+            top: -5px;
+            bottom: -5px;
+            width: 2px;
+            background: var(--danger-red);
+            z-index: 5;
+        }
+
+        /* Results / Warnings */
+        #results-container {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--panel-dark);
+            border: 2px solid var(--electric-yellow);
+            display: none;
+        }
+
+        #results-container.active {
+            display: block;
+        }
+
+        .warning-text {
+            color: var(--danger-red);
+            font-weight: bold;
+            margin-top: 10px;
+            font-size: 1.1rem;
+        }
+
+        /* Settings */
+        .setting-group {
+            margin-bottom: 2rem;
+        }
+        
+        .setting-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--electric-yellow);
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--electric-yellow);
+        }
+
+        .val-display {
+            float: right;
+            color: var(--text-light);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="home-screen" class="screen active">
+        <div>
+            <h1>STORM<br>TRACK<br>SYS.</h1>
+            <p style="margin-bottom: 2rem; color: var(--text-dim); font-size: 0.9rem;">
+                Distance calculation via visual and acoustic discrepancy analysis. Use at own risk.
+            </p>
+        </div>
+        
+        <div style="margin-top: auto; padding-bottom: 2rem;">
+            <button class="btn btn-primary" onclick="nav('tracker-screen'); initSensors();">Start Finding</button>
+            <button class="btn" onclick="nav('settings-screen')">Settings</button>
+            <a href="https://buymeacoffee.com/josjosjos" target="_blank" class="btn" style="border-color: var(--electric-yellow); color: var(--electric-yellow);">Donate (Coffee)</a>
+        </div>
+    </div>
+
+    <div id="settings-screen" class="screen">
+        <div class="header-bar">
+            <h2>Settings</h2>
+            <button onclick="nav('home-screen')" style="background:none; border:none; color:var(--text-light); font-weight:bold; font-size:1.2rem;">[X]</button>
+        </div>
+
+        <div class="setting-group">
+            <label>Mic Sensitivity <span id="mic-val" class="val-display">25</span></label>
+            <input type="range" id="mic-slider" min="1" max="100" value="25" oninput="document.getElementById('mic-val').innerText = this.value">
+            <p style="font-size: 0.7rem; color: var(--text-dim); margin-top: 5px;">Suggest 20-25. Adjust based on environment.</p>
+        </div>
+
+        <div class="setting-group">
+            <label>Flash Threshold <span id="flash-val" class="val-display">50</span></label>
+            <input type="range" id="flash-slider" min="10" max="150" value="50" oninput="document.getElementById('flash-val').innerText = this.value">
+        </div>
+
+        <button class="btn btn-primary" style="margin-top: auto;" onclick="nav('home-screen')">Save</button>
+    </div>
+
+    <div id="tracker-screen" class="screen">
+        <div class="header-bar">
+            <h2>SYS. ACTIVE</h2>
+            <button onclick="stopSensors(); nav('home-screen');" style="background:none; border:none; color:var(--danger-red); font-weight:bold;">[ABORT]</button>
+        </div>
+
+        <div class="camera-container">
+            <video id="camera-feed" autoplay playsinline></video>
+            <canvas id="canvas-feed" style="display:none;"></canvas>
+            <div class="flash-overlay" id="flash-fx"></div>
+            <div class="overlay-text">CAM-01 OP.</div>
+            <div id="status-indicator">WAITING FOR FLASH...</div>
+        </div>
+
+        <div class="mic-container">
+            <div style="font-size: 0.8rem; margin-bottom: 5px;">MIC VOL // <span id="live-vol">0.00</span></div>
+            <div class="mic-bar-wrapper">
+                <div id="mic-bar"></div>
+                <div id="mic-threshold-line" style="left: 25%;"></div>
+            </div>
+        </div>
+
+        <div id="results-container">
+            <div style="border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 5px;">
+                T-ELAPSED: <span id="res-time" style="color: var(--electric-yellow)">0</span> ms
+            </div>
+            <div id="res-dist" style="font-size: 0.85rem; line-height: 1.5; color: var(--text-dim);">
+                </div>
+            <div id="res-warning" class="warning-text"></div>
+            <button class="btn" style="margin-top: 15px; padding: 10px; font-size: 1rem;" onclick="resetTracker()">Restart</button>
+        </div>
+    </div>
+
+    <script>
+        // State Machine
+        let STATE = 'IDLE'; // IDLE, WAIT_FLASH, WAIT_THUNDER, RESULT
+        let flashTime = 0;
+        let prevBrightness = null;
+        let animationFrameId = null;
+
+        // Hardware streams
+        let videoStream = null;
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
+
+        // UI Elements
+        const videoElement = document.getElementById('camera-feed');
+        const canvasElement = document.getElementById('canvas-feed');
+        const ctx = canvasElement.getContext('2d', { willReadFrequently: true });
+        const statusIndicator = document.getElementById('status-indicator');
+        const micBar = document.getElementById('mic-bar');
+        const liveVolTxt = document.getElementById('live-vol');
+        const flashFx = document.getElementById('flash-fx');
+        const resultsContainer = document.getElementById('results-container');
+        
+        // Settings
+        const getMicThreshold = () => parseInt(document.getElementById('mic-slider').value);
+        const getFlashThreshold = () => parseInt(document.getElementById('flash-slider').value);
+
+        // Navigation
+        function nav(screenId) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+            
+            // Update threshold UI line on open
+            if(screenId === 'tracker-screen') {
+                document.getElementById('mic-threshold-line').style.left = getMicThreshold() + '%';
+            }
+        }
+
+        async function initSensors() {
+            STATE = 'WAIT_FLASH';
+            statusIndicator.innerText = "WAITING FOR FLASH...";
+            statusIndicator.style.color = "var(--text-light)";
+            resultsContainer.classList.remove('active');
+            prevBrightness = null;
+
+            try {
+                // Init Camera (Environment facing preferred)
+                videoStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                videoElement.srcObject = videoStream;
+                
+                // Init Microphone
+                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                microphone = audioContext.createMediaStreamSource(audioStream);
+                microphone.connect(analyser);
+
+                // Start loop
+                processFrames();
+
+            } catch (err) {
+                alert("Hardware access denied or unavailable. Please ensure you are on HTTPS and allow permissions.\n\nError: " + err.message);
+                nav('home-screen');
+            }
+        }
+
+        function stopSensors() {
+            STATE = 'IDLE';
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            if (videoStream) videoStream.getTracks().forEach(track => track.stop());
+            if (audioContext) audioContext.close();
+        }
+
+        function resetTracker() {
+            resultsContainer.classList.remove('active');
+            STATE = 'WAIT_FLASH';
+            statusIndicator.innerText = "WAITING FOR FLASH...";
+            statusIndicator.style.color = "var(--text-light)";
+            prevBrightness = null;
+        }
+
+        function processFrames() {
+            if (STATE === 'IDLE') return;
+
+            // 1. Process Audio Visualizer (Always running when active)
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Calculate average volume map to 0-100 range roughly
+            let sum = 0;
+            for(let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
+            let averageVol = sum / dataArray.length;
+            let normalizedVol = Math.min((averageVol / 128) * 100, 100); 
+
+            micBar.style.width = normalizedVol + '%';
+            liveVolTxt.innerText = normalizedVol.toFixed(1);
+
+            // 2. State Logic
+            if (STATE === 'WAIT_FLASH') {
+                detectFlash();
+            } else if (STATE === 'WAIT_THUNDER') {
+                detectThunder(normalizedVol);
+            }
+
+            animationFrameId = requestAnimationFrame(processFrames);
+        }
+
+        function detectFlash() {
+            if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
+                canvasElement.width = videoElement.videoWidth / 4; // Scale down for perf
+                canvasElement.height = videoElement.videoHeight / 4;
+                ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+                
+                let imageData = ctx.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                let data = imageData.data;
+                
+                let brightnessSum = 0;
+                for(let i = 0; i < data.length; i += 4) {
+                    // Grayscale conversion
+                    brightnessSum += (0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2]);
+                }
+                let currBrightness = brightnessSum / (data.length / 4);
+
+                if (prevBrightness !== null) {
+                    if (currBrightness - prevBrightness > getFlashThreshold()) {
+                        triggerFlashDetect();
+                    }
+                }
+                prevBrightness = currBrightness;
+            }
+        }
+
+        function triggerFlashDetect() {
+            STATE = 'WAIT_THUNDER';
+            flashTime = performance.now();
+            
+            // Visual feedback
+            flashFx.classList.add('is-flashing');
+            setTimeout(() => flashFx.classList.remove('is-flashing'), 500);
+
+            statusIndicator.innerText = "LISTENING FOR THUNDER...";
+            statusIndicator.style.color = "var(--electric-yellow)";
+            
+            // Set max wait time (15 seconds)
+            setTimeout(() => {
+                if (STATE === 'WAIT_THUNDER') {
+                    statusIndicator.innerText = "TIMEOUT. NO THUNDER.";
+                    setTimeout(resetTracker, 3000);
+                }
+            }, 15000);
+        }
+
+        function detectThunder(vol) {
+            if (vol > getMicThreshold()) {
+                let thunderTime = performance.now();
+                let elapsedMs = thunderTime - flashTime;
+                calculateAndShowDistance(elapsedMs);
+            }
+        }
+
+        function calculateAndShowDistance(elapsedMs) {
+            STATE = 'RESULT';
+            statusIndicator.innerText = "CALCULATION COMPLETE";
+            statusIndicator.style.color = "var(--safe-green)";
+
+            let distanceMeters = 343 * (elapsedMs / 1000);
+            
+            document.getElementById('res-time').innerText = Math.round(elapsedMs);
+            
+            let htmlDist = `
+                KM: ${(distanceMeters / 1000).toFixed(2)}<br>
+                MI: ${(distanceMeters / 1609.34).toFixed(2)}<br>
+                FT: ${(distanceMeters / 0.3048).toFixed(2)}<br>
+                M : ${distanceMeters.toFixed(2)}<br>
+                YD: ${(distanceMeters / 0.9144).toFixed(2)}
+            `;
+            document.getElementById('res-dist').innerHTML = htmlDist;
+
+            let warning = "";
+            if (elapsedMs < 1500) warning = "SEEK SHELTER IMMEDIATELY! VERY CLOSE!";
+            else if (elapsedMs >= 1500 && elapsedMs < 2500) warning = "VERY CLOSE! DO NOT BE OUTSIDE!";
+            else if (elapsedMs >= 2500 && elapsedMs < 3500) warning = "CLOSE. GET INSIDE FAST!";
+            else if (elapsedMs >= 3500 && elapsedMs < 4500) warning = "GETTING CLOSER. GET INSIDE.";
+            else if (elapsedMs >= 4500 && elapsedMs < 6000) warning = "GET INSIDE SOON. AVOID OPEN AREAS.";
+            else if (elapsedMs >= 6000 && elapsedMs < 9000) warning = "LEAVE OPEN AREAS. FIND DRY SAFETY.";
+            else if (elapsedMs >= 9000 && elapsedMs < 14000) warning = "SAFE FOR NOW. SLOWLY LEAVE OPEN AREAS.";
+            else if (elapsedMs >= 14000 && elapsedMs < 19000) warning = "OK TO BE OUTSIDE. MONITOR CONDITIONS.";
+            else if (elapsedMs >= 19000) warning = "YOU'RE FINE. KEEP CHECKING.";
+
+            document.getElementById('res-warning').innerText = warning;
+            
+            // Adjust warning color based on severity
+            if (elapsedMs < 6000) {
+                document.getElementById('res-warning').style.color = "var(--danger-red)";
+            } else if (elapsedMs < 14000) {
+                document.getElementById('res-warning').style.color = "var(--electric-yellow)";
+            } else {
+                document.getElementById('res-warning').style.color = "var(--safe-green)";
+            }
+
+            resultsContainer.classList.add('active');
+        }
+    </script>
+</body>
+</html>
