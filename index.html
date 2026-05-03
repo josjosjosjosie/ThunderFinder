@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ThunderStrike Tracker</title>
+    <title>ThunderFinder</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
 
@@ -29,11 +29,12 @@
         body {
             background-color: var(--bg-dark);
             color: var(--text-light);
-            height: 100vh;
+            height: 100dvh;
             width: 100vw;
             overflow: hidden;
             display: flex;
-            flex-direction: column;
+            justify-content: center;
+            align-items: center;
         }
 
         /* Scanline Overlay for aesthetic */
@@ -48,6 +49,19 @@
             pointer-events: none;
         }
 
+        /* Main App Container for Resolution Support */
+        .app-container {
+            width: 100%;
+            max-width: 500px;
+            height: 100%;
+            max-height: 1000px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--bg-dark);
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+        }
+
         .screen {
             display: none;
             flex-direction: column;
@@ -55,6 +69,7 @@
             width: 100%;
             padding: 20px;
             animation: glitchFade 0.3s ease-out forwards;
+            overflow-y: auto;
         }
 
         .screen.active {
@@ -66,14 +81,54 @@
             100% { opacity: 1; transform: scale(1) translateY(0); }
         }
 
-        h1 {
-            font-size: 2.5rem;
+        /* Home Screen Specifics */
+        #home-screen {
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            position: relative;
+        }
+
+        /* Cool Thunder Animation */
+        .thunder-icon {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            fill: var(--electric-yellow);
+            filter: drop-shadow(0 0 15px var(--electric-yellow));
+            animation: strike 5s infinite;
+        }
+
+        @keyframes strike {
+            0%, 91%, 95%, 100% { opacity: 0.1; filter: drop-shadow(0 0 0px var(--electric-yellow)); transform: scale(1); }
+            92%, 96% { opacity: 1; filter: drop-shadow(0 0 25px var(--electric-yellow)); transform: scale(1.1) rotate(-5deg); }
+            93%, 97% { opacity: 1; filter: drop-shadow(0 0 15px var(--electric-yellow)); transform: scale(1.05) rotate(5deg); }
+        }
+
+        #home-screen h1 {
+            font-size: 3rem;
             line-height: 1;
-            margin-bottom: 2rem;
-            text-shadow: 2px 2px 0px var(--electric-yellow);
+            margin-bottom: 1rem;
+            text-shadow: 3px 3px 0px var(--electric-yellow);
             color: var(--bg-dark);
             -webkit-text-stroke: 1px var(--text-light);
             letter-spacing: -2px;
+        }
+
+        .home-subtitle {
+            margin-bottom: 3rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            max-width: 300px;
+            line-height: 1.4;
+        }
+
+        .btn-container {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
         }
 
         .btn {
@@ -84,10 +139,11 @@
             font-size: 1.2rem;
             font-weight: 700;
             cursor: pointer;
-            margin-bottom: 1rem;
             transition: all 0.2s;
             text-align: center;
             text-decoration: none;
+            width: 100%;
+            max-width: 300px;
             display: block;
         }
 
@@ -113,6 +169,10 @@
             padding-bottom: 0.5rem;
         }
 
+        .header-bar h2 {
+            font-size: 1.5rem;
+        }
+
         /* Video / Tracker View */
         .camera-container {
             position: relative;
@@ -123,6 +183,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            min-height: 200px;
         }
 
         video {
@@ -227,6 +288,7 @@
         /* Settings */
         .setting-group {
             margin-bottom: 2rem;
+            text-align: left;
         }
         
         .setting-group label {
@@ -248,15 +310,19 @@
 </head>
 <body>
 
+<div class="app-container">
+
     <div id="home-screen" class="screen active">
-        <div>
-            <h1>STORM<br>TRACK<br>SYS.</h1>
-            <p style="margin-bottom: 2rem; color: var(--text-dim); font-size: 0.9rem;">
-                Distance calculation via visual and acoustic discrepancy analysis. Use at own risk.
-            </p>
-        </div>
+        <svg class="thunder-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" />
+        </svg>
+
+        <h1>THUNDER<br>FINDER</h1>
+        <p class="home-subtitle">
+            Distance calculation via visual and acoustic discrepancy analysis. Use at your own risk.
+        </p>
         
-        <div style="margin-top: auto; padding-bottom: 2rem;">
+        <div class="btn-container">
             <button class="btn btn-primary" onclick="nav('tracker-screen'); initSensors();">Start Finding</button>
             <button class="btn" onclick="nav('settings-screen')">Settings</button>
             <a href="https://buymeacoffee.com/josjosjos" target="_blank" class="btn" style="border-color: var(--electric-yellow); color: var(--electric-yellow);">Donate (Coffee)</a>
@@ -266,7 +332,7 @@
     <div id="settings-screen" class="screen">
         <div class="header-bar">
             <h2>Settings</h2>
-            <button onclick="nav('home-screen')" style="background:none; border:none; color:var(--text-light); font-weight:bold; font-size:1.2rem;">[X]</button>
+            <button onclick="nav('home-screen')" style="background:none; border:none; color:var(--text-light); font-weight:bold; font-size:1.2rem; cursor:pointer;">[X]</button>
         </div>
 
         <div class="setting-group">
@@ -280,13 +346,15 @@
             <input type="range" id="flash-slider" min="10" max="150" value="50" oninput="document.getElementById('flash-val').innerText = this.value">
         </div>
 
-        <button class="btn btn-primary" style="margin-top: auto;" onclick="nav('home-screen')">Save</button>
+        <div class="btn-container" style="margin-top: auto;">
+            <button class="btn btn-primary" onclick="nav('home-screen')">Save</button>
+        </div>
     </div>
 
     <div id="tracker-screen" class="screen">
         <div class="header-bar">
             <h2>SYS. ACTIVE</h2>
-            <button onclick="stopSensors(); nav('home-screen');" style="background:none; border:none; color:var(--danger-red); font-weight:bold;">[ABORT]</button>
+            <button onclick="stopSensors(); nav('home-screen');" style="background:none; border:none; color:var(--danger-red); font-weight:bold; cursor:pointer;">[ABORT]</button>
         </div>
 
         <div class="camera-container">
@@ -312,9 +380,11 @@
             <div id="res-dist" style="font-size: 0.85rem; line-height: 1.5; color: var(--text-dim);">
                 </div>
             <div id="res-warning" class="warning-text"></div>
-            <button class="btn" style="margin-top: 15px; padding: 10px; font-size: 1rem;" onclick="resetTracker()">Restart</button>
+            <button class="btn" style="margin-top: 15px; padding: 10px; font-size: 1rem; width:100%; max-width:none;" onclick="resetTracker()">Restart</button>
         </div>
     </div>
+
+</div>
 
     <script>
         // State Machine
