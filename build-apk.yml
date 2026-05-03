@@ -1,0 +1,304 @@
+name: Build ThunderFinder Release APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout repo ──────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Java 21 ────────────────────────────────────────────────────────
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # ── 3. Node.js ────────────────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── 4. Android SDK ────────────────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licences
+        run: yes | sdkmanager --licenses || true
+
+      # ── 5. Install Pillow ─────────────────────────────────────────────────
+      - name: Install Pillow
+        run: pip install Pillow --break-system-packages
+
+      # ── 6. Install Capacitor ──────────────────────────────────────────────
+      - name: Install Capacitor CLI and dependencies
+        run: |
+          npm install -g @capacitor/cli
+          npm init -y
+          npm install @capacitor/core @capacitor/android @capacitor/geolocation
+
+      # ── 7. Prepare assets ─────────────────────────────────────────────────
+      - name: Prepare app icon and web assets
+        run: |
+          mkdir -p www
+          cp "1777814476566_2.png" www/icon.png
+          cp index.html www/index.html
+
+      # ── 8. Capacitor config ───────────────────────────────────────────────
+      - name: Create Capacitor config
+        run: |
+          cat > capacitor.config.json << 'EOF'
+          {
+            "appId": "com.thunderfinder.app",
+            "appName": "ThunderFinder",
+            "webDir": "www",
+            "android": {
+              "allowMixedContent": true,
+              "captureInput": true,
+              "webContentsDebuggingEnabled": false
+            }
+          }
+          EOF
+
+      # ── 9. Add & sync Android platform ───────────────────────────────────
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # ── 10. Patch AndroidManifest – permissions ────────────────────────────
+      - name: Patch AndroidManifest – permissions
+        run: |
+          python3 << 'PYEOF'
+          import xml.etree.ElementTree as ET
+
+          ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
+          ET.register_namespace('tools', 'http://schemas.android.com/tools')
+
+          path = 'android/app/src/main/AndroidManifest.xml'
+          tree = ET.parse(path)
+          root = tree.getroot()
+          ns = 'http://schemas.android.com/apk/res/android'
+
+          permissions = [
+              'android.permission.ACCESS_FINE_LOCATION',
+              'android.permission.ACCESS_COARSE_LOCATION',
+              'android.permission.ACCESS_BACKGROUND_LOCATION',
+              'android.permission.CAMERA',
+              'android.permission.RECORD_AUDIO',
+              'android.permission.MODIFY_AUDIO_SETTINGS',
+          ]
+
+          existing = {
+              el.get(f'{{{ns}}}name')
+              for el in root.findall('uses-permission')
+          }
+
+          insert_at = 0
+          for i, child in enumerate(root):
+              if child.tag == 'application':
+                  insert_at = i
+                  break
+
+          for i, perm in enumerate(permissions):
+              if perm not in existing:
+                  el = ET.Element('uses-permission')
+                  el.set(f'{{{ns}}}name', perm)
+                  root.insert(insert_at + i, el)
+
+          feature = ET.Element('uses-feature')
+          feature.set(f'{{{ns}}}name', 'android.hardware.camera')
+          feature.set(f'{{{ns}}}required', 'false')
+          root.insert(insert_at + len(permissions), feature)
+
+          tree.write(path, xml_declaration=True, encoding='utf-8')
+          print("Manifest patched successfully.")
+          PYEOF
+
+      # ── 11. Patch MainActivity for WebView camera/mic permissions ──────────
+      - name: Patch MainActivity for WebView media permissions
+        run: |
+          MAIN="android/app/src/main/java/com/thunderfinder/app/MainActivity.java"
+          cat > "$MAIN" << 'EOF'
+          package com.thunderfinder.app;
+
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+          import android.os.Bundle;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  WebView webView = getBridge().getWebView();
+                  webView.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onPermissionRequest(final PermissionRequest request) {
+                          runOnUiThread(() -> request.grant(request.getResources()));
+                      }
+                  });
+              }
+          }
+          EOF
+
+      # ── 12. Replace ALL icons with square + true circular round variant ────
+      - name: Replace all launcher icons
+        run: |
+          python3 << 'PYEOF'
+          from PIL import Image, ImageDraw
+          import os, shutil
+
+          src = "www/icon.png"
+          img = Image.open(src).convert("RGBA")
+
+          densities = {
+              "mdpi":    48,
+              "hdpi":    72,
+              "xhdpi":   96,
+              "xxhdpi":  144,
+              "xxxhdpi": 192,
+          }
+
+          foreground_sizes = {
+              "mdpi":    108,
+              "hdpi":    162,
+              "xhdpi":   216,
+              "xxhdpi":  324,
+              "xxxhdpi": 432,
+          }
+
+          def make_round(image, size):
+              """Crop image into a perfect circle with transparent background."""
+              base = image.resize((size, size), Image.LANCZOS)
+              # Create circular mask
+              mask = Image.new("L", (size, size), 0)
+              draw = ImageDraw.Draw(mask)
+              draw.ellipse((0, 0, size, size), fill=255)
+              # Apply mask
+              result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+              result.paste(base, (0, 0), mask)
+              return result
+
+          res_dir = "android/app/src/main/res"
+
+          for density, size in densities.items():
+              folder = f"{res_dir}/mipmap-{density}"
+              os.makedirs(folder, exist_ok=True)
+
+              # Square icon
+              square = img.resize((size, size), Image.LANCZOS)
+              square.save(f"{folder}/ic_launcher.png")
+
+              # True circular round icon
+              round_icon = make_round(img, size)
+              round_icon.save(f"{folder}/ic_launcher_round.png")
+
+              # Adaptive icon foreground (square, larger canvas)
+              fg_size = foreground_sizes[density]
+              canvas = Image.new("RGBA", (fg_size, fg_size), (0, 0, 0, 0))
+              logo = img.resize((fg_size, fg_size), Image.LANCZOS)
+              canvas.paste(logo, (0, 0), logo)
+              canvas.save(f"{folder}/ic_launcher_foreground.png")
+
+              print(f"Done {density}: square={size}px round={size}px (circular) foreground={fg_size}px")
+
+          # Delete adaptive icon XMLs so Android uses our PNGs
+          for xml_file in [
+              f"{res_dir}/mipmap-anydpi-v26/ic_launcher.xml",
+              f"{res_dir}/mipmap-anydpi-v26/ic_launcher_round.xml",
+          ]:
+              if os.path.exists(xml_file):
+                  os.remove(xml_file)
+                  print(f"Removed: {xml_file}")
+
+          anydpi_dir = f"{res_dir}/mipmap-anydpi-v26"
+          if os.path.exists(anydpi_dir) and not os.listdir(anydpi_dir):
+              shutil.rmtree(anydpi_dir)
+
+          print("All icons replaced successfully.")
+          PYEOF
+
+      # ── 13. Generate keystore on the fly ──────────────────────────────────
+      - name: Generate keystore
+        run: |
+          keytool -genkey -v \
+            -keystore android/app/thunderfinder.jks \
+            -alias thunderfinder \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass thunderfinder \
+            -keypass thunderfinder \
+            -dname "CN=ThunderFinder, OU=App, O=ThunderFinder, L=Unknown, S=Unknown, C=US"
+
+      # ── 14. Inject signing config into build.gradle ───────────────────────
+      - name: Configure release signing
+        run: |
+          python3 << 'PYEOF'
+          path = 'android/app/build.gradle'
+          with open(path, 'r') as f:
+              content = f.read()
+
+          signing = """
+              signingConfigs {
+                  release {
+                      storeFile file("thunderfinder.jks")
+                      storePassword "thunderfinder"
+                      keyAlias "thunderfinder"
+                      keyPassword "thunderfinder"
+                  }
+              }
+          """
+
+          release_build = """
+                  release {
+                      signingConfig signingConfigs.release
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+          """
+
+          content = content.replace('android {', 'android {' + signing, 1)
+          content = content.replace('buildTypes {', 'buildTypes {' + release_build, 1)
+
+          with open(path, 'w') as f:
+              f.write(content)
+
+          print("build.gradle patched successfully.")
+          PYEOF
+
+      # ── 15. Make gradlew executable ───────────────────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      # ── 16. Build signed release APK ──────────────────────────────────────
+      - name: Build Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      # ── 17. Rename & upload ───────────────────────────────────────────────
+      - name: Rename APK
+        run: |
+          mv android/app/build/outputs/apk/release/app-release.apk \
+             android/app/build/outputs/apk/release/ThunderFinder-release.apk
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ThunderFinder-release
+          path: android/app/build/outputs/apk/release/ThunderFinder-release.apk
+          retention-days: 30
