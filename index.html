@@ -472,7 +472,7 @@
         // Hardware Device Enumeration
         async function populateDevices() {
             try {
-                // Request temporary permission to get readable device labels
+                // Single combined call to get permission for both audio and video
                 const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
                 tempStream.getTracks().forEach(track => track.stop());
 
@@ -510,19 +510,33 @@
             prevBrightness = null;
 
             try {
-                // Determine constraints based on settings selection
                 const selectedCamId = camSelect.value;
                 const selectedMicId = micSelect.value;
 
-                const videoConstraints = selectedCamId ? { deviceId: { exact: selectedCamId } } : { facingMode: 'environment' };
-                const audioConstraints = selectedMicId ? { deviceId: { exact: selectedMicId } } : true;
+                const videoConstraints = selectedCamId
+                    ? { deviceId: { exact: selectedCamId } }
+                    : { facingMode: 'environment' };
 
-                // Init Camera 
-                videoStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+                const audioConstraints = selectedMicId
+                    ? { deviceId: { exact: selectedMicId } }
+                    : true;
+
+                // Single combined call — Android/Capacitor rejects two separate calls
+                const combinedStream = await navigator.mediaDevices.getUserMedia({
+                    video: videoConstraints,
+                    audio: audioConstraints
+                });
+
+                // Split the combined stream into video and audio tracks
+                const videoTracks = combinedStream.getVideoTracks();
+                const audioTracks = combinedStream.getAudioTracks();
+
+                // Attach video to element
+                videoStream = new MediaStream(videoTracks);
                 videoElement.srcObject = videoStream;
-                
-                // Init Microphone
-                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+
+                // Hook audio tracks into analyser
+                const audioStream = new MediaStream(audioTracks);
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
@@ -533,7 +547,15 @@
                 processFrames();
 
             } catch (err) {
-                alert("Hardware access denied or unavailable. Please ensure you are on HTTPS and allow permissions.\n\nError: " + err.message);
+                let msg = "Hardware access denied or unavailable.\n\nError: " + err.message;
+                if (err.name === 'NotAllowedError') {
+                    msg = "Camera & microphone permission was denied.\n\nPlease go to your phone Settings > Apps > ThunderFinder > Permissions and enable Camera and Microphone.";
+                } else if (err.name === 'NotFoundError') {
+                    msg = "No camera or microphone found on this device.";
+                } else if (err.name === 'NotReadableError') {
+                    msg = "Camera or microphone is already in use by another app. Close other apps and try again.";
+                }
+                alert(msg);
                 nav('home-screen');
             }
         }
