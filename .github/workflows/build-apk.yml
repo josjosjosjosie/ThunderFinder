@@ -68,11 +68,6 @@ jobs:
                 "minSdkVersion": 23,
                 "targetSdkVersion": 34
               }
-            },
-            "plugins": {
-              "Geolocation": {
-                "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION"]
-              }
             }
           }
           EOF
@@ -84,17 +79,56 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # ── 10. Permissions ───────────────────────────────────────────────────
+      # ── 10. Inject permissions via Python (safe XML editing) ──────────────
       - name: Patch AndroidManifest – permissions
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          PERMISSIONS='    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n\
-            <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n\
-            <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />\n\
-            <uses-permission android:name="android.permission.CAMERA" />\n\
-            <uses-feature android:name="android.hardware.camera" android:required="false" />\n\
-            <uses-permission android:name="android.permission.RECORD_AUDIO" />'
-          sed -i "s|<manifest|${PERMISSIONS}\n<manifest|" "$MANIFEST"
+          python3 << 'PYEOF'
+          import xml.etree.ElementTree as ET
+
+          ET.register_namespace('android', 'http://schemas.android.com/apk/res/android')
+          ET.register_namespace('tools', 'http://schemas.android.com/tools')
+
+          path = 'android/app/src/main/AndroidManifest.xml'
+          tree = ET.parse(path)
+          root = tree.getroot()
+
+          ns = 'http://schemas.android.com/apk/res/android'
+
+          permissions = [
+              'android.permission.ACCESS_FINE_LOCATION',
+              'android.permission.ACCESS_COARSE_LOCATION',
+              'android.permission.ACCESS_BACKGROUND_LOCATION',
+              'android.permission.CAMERA',
+              'android.permission.RECORD_AUDIO',
+          ]
+
+          # Get existing permission names to avoid duplicates
+          existing = {
+              el.get(f'{{{ns}}}name')
+              for el in root.findall('uses-permission')
+          }
+
+          insert_at = 0
+          for i, child in enumerate(root):
+              if child.tag == 'application':
+                  insert_at = i
+                  break
+
+          for i, perm in enumerate(permissions):
+              if perm not in existing:
+                  el = ET.Element('uses-permission')
+                  el.set(f'{{{ns}}}name', perm)
+                  root.insert(insert_at + i, el)
+
+          # Add camera feature
+          feature = ET.Element('uses-feature')
+          feature.set(f'{{{ns}}}name', 'android.hardware.camera')
+          feature.set(f'{{{ns}}}required', 'false')
+          root.insert(insert_at + len(permissions), feature)
+
+          tree.write(path, xml_declaration=True, encoding='utf-8')
+          print("Manifest patched successfully.")
+          PYEOF
 
       # ── 11. Replace launcher icons ────────────────────────────────────────
       - name: Replace launcher icons
@@ -129,19 +163,38 @@ jobs:
       # ── 13. Inject signing config into build.gradle ───────────────────────
       - name: Configure release signing
         run: |
-          GRADLE="android/app/build.gradle"
+          python3 << 'PYEOF'
+          path = 'android/app/build.gradle'
+          with open(path, 'r') as f:
+              content = f.read()
 
-          SIGNING_CONFIG='    signingConfigs {\n\
-              release {\n\
-                  storeFile file("thunderfinder.jks")\n\
-                  storePassword "thunderfinder"\n\
-                  keyAlias "thunderfinder"\n\
-                  keyPassword "thunderfinder"\n\
-              }\n\
-          }'
+          signing = """
+              signingConfigs {
+                  release {
+                      storeFile file("thunderfinder.jks")
+                      storePassword "thunderfinder"
+                      keyAlias "thunderfinder"
+                      keyPassword "thunderfinder"
+                  }
+              }
+          """
 
-          sed -i "s|android {|android {\n${SIGNING_CONFIG}|" "$GRADLE"
-          sed -i "s|buildTypes {|buildTypes {\n        release {\n            signingConfig signingConfigs.release\n            minifyEnabled false\n            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'\n        }|" "$GRADLE"
+          release_build = """
+                  release {
+                      signingConfig signingConfigs.release
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+          """
+
+          content = content.replace('android {', 'android {' + signing, 1)
+          content = content.replace('buildTypes {', 'buildTypes {' + release_build, 1)
+
+          with open(path, 'w') as f:
+              f.write(content)
+
+          print("build.gradle patched successfully.")
+          PYEOF
 
       # ── 14. Make gradlew executable ───────────────────────────────────────
       - name: Make gradlew executable
