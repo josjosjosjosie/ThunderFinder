@@ -37,9 +37,9 @@ jobs:
       - name: Accept Android SDK licences
         run: yes | sdkmanager --licenses || true
 
-      # ── 5. Install ImageMagick ────────────────────────────────────────────
-      - name: Install ImageMagick
-        run: sudo apt-get install -y imagemagick
+      # ── 5. Install Pillow for icon resizing ───────────────────────────────
+      - name: Install Pillow
+        run: pip install Pillow --break-system-packages
 
       # ── 6. Install Capacitor ──────────────────────────────────────────────
       - name: Install Capacitor CLI and dependencies
@@ -52,12 +52,10 @@ jobs:
       - name: Prepare app icon and web assets
         run: |
           mkdir -p www
-          cp 1777814476566_2.png www/icon.png
+          cp "1777814476566_2.png" www/icon.png
           cp index.html www/index.html
 
       # ── 8. Capacitor config ───────────────────────────────────────────────
-      #       allowMixedContent + mediaPlaybackRequiresUserGesture = false
-      #       are both required for getUserMedia to work inside a WebView
       - name: Create Capacitor config
         run: |
           cat > capacitor.config.json << 'EOF'
@@ -69,11 +67,6 @@ jobs:
               "allowMixedContent": true,
               "captureInput": true,
               "webContentsDebuggingEnabled": false
-            },
-            "plugins": {
-              "CapacitorHttp": {
-                "enabled": true
-              }
             }
           }
           EOF
@@ -135,13 +128,10 @@ jobs:
           print("Manifest patched successfully.")
           PYEOF
 
-      # ── 11. Patch MainActivity to enable WebView camera/mic access ─────────
-      #        Android WebView blocks getUserMedia unless the host Activity
-      #        overrides onPermissionRequest and grants it programmatically.
+      # ── 11. Patch MainActivity for WebView camera/mic permissions ──────────
       - name: Patch MainActivity for WebView media permissions
         run: |
           MAIN="android/app/src/main/java/com/thunderfinder/app/MainActivity.java"
-
           cat > "$MAIN" << 'EOF'
           package com.thunderfinder.app;
 
@@ -152,13 +142,9 @@ jobs:
           import android.os.Bundle;
 
           public class MainActivity extends BridgeActivity {
-
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-
-                  // Override WebChromeClient so the WebView forwards
-                  // camera/mic permission requests to the OS instead of blocking them
                   WebView webView = getBridge().getWebView();
                   webView.setWebChromeClient(new WebChromeClient() {
                       @Override
@@ -170,22 +156,34 @@ jobs:
           }
           EOF
 
-      # ── 12. Replace launcher icons ────────────────────────────────────────
+      # ── 12. Replace launcher icons using Pillow ───────────────────────────
       - name: Replace launcher icons
         run: |
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            case $density in
-              mdpi)    SIZE=48  ;;
-              hdpi)    SIZE=72  ;;
-              xhdpi)   SIZE=96  ;;
-              xxhdpi)  SIZE=144 ;;
-              xxxhdpi) SIZE=192 ;;
-            esac
-            DIR="android/app/src/main/res/mipmap-${density}"
-            mkdir -p "$DIR"
-            convert www/icon.png -resize "${SIZE}x${SIZE}" "${DIR}/ic_launcher.png"
-            convert www/icon.png -resize "${SIZE}x${SIZE}" "${DIR}/ic_launcher_round.png"
-          done
+          python3 << 'PYEOF'
+          from PIL import Image
+          import os
+
+          src = "www/icon.png"
+          img = Image.open(src).convert("RGBA")
+
+          densities = {
+              "mdpi":    48,
+              "hdpi":    72,
+              "xhdpi":   96,
+              "xxhdpi":  144,
+              "xxxhdpi": 192,
+          }
+
+          for density, size in densities.items():
+              folder = f"android/app/src/main/res/mipmap-{density}"
+              os.makedirs(folder, exist_ok=True)
+              resized = img.resize((size, size), Image.LANCZOS)
+              resized.save(f"{folder}/ic_launcher.png")
+              resized.save(f"{folder}/ic_launcher_round.png")
+              print(f"Saved {density} ({size}x{size})")
+
+          print("All icons replaced successfully.")
+          PYEOF
 
       # ── 13. Generate keystore on the fly ──────────────────────────────────
       - name: Generate keystore
