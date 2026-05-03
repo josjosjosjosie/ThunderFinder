@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,21 +37,25 @@ jobs:
       - name: Accept Android SDK licences
         run: yes | sdkmanager --licenses || true
 
-      # ── 5. Install Capacitor ──────────────────────────────────────────────
+      # ── 5. Install ImageMagick ────────────────────────────────────────────
+      - name: Install ImageMagick
+        run: sudo apt-get install -y imagemagick
+
+      # ── 6. Install Capacitor ──────────────────────────────────────────────
       - name: Install Capacitor CLI and dependencies
         run: |
           npm install -g @capacitor/cli
           npm init -y
           npm install @capacitor/core @capacitor/android @capacitor/geolocation
 
-      # ── 6. Prepare assets ─────────────────────────────────────────────────
+      # ── 7. Prepare assets ─────────────────────────────────────────────────
       - name: Prepare app icon and web assets
         run: |
           mkdir -p www
           cp 1777814476566_2.png www/icon.png
           cp index.html www/index.html
 
-      # ── 7. Capacitor config ───────────────────────────────────────────────
+      # ── 8. Capacitor config ───────────────────────────────────────────────
       - name: Create Capacitor config
         run: |
           cat > capacitor.config.json << 'EOF'
@@ -70,14 +77,14 @@ jobs:
           }
           EOF
 
-      # ── 8. Add & sync Android platform ───────────────────────────────────
+      # ── 9. Add & sync Android platform ───────────────────────────────────
       - name: Add Android platform
         run: npx cap add android
 
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # ── 9. Permissions ────────────────────────────────────────────────────
+      # ── 10. Permissions ───────────────────────────────────────────────────
       - name: Patch AndroidManifest – permissions
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -89,7 +96,7 @@ jobs:
             <uses-permission android:name="android.permission.RECORD_AUDIO" />'
           sed -i "s|<manifest|${PERMISSIONS}\n<manifest|" "$MANIFEST"
 
-      # ── 10. Replace launcher icons ────────────────────────────────────────
+      # ── 11. Replace launcher icons ────────────────────────────────────────
       - name: Replace launcher icons
         run: |
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
@@ -106,7 +113,7 @@ jobs:
             convert www/icon.png -resize "${SIZE}x${SIZE}" "${DIR}/ic_launcher_round.png"
           done
 
-      # ── 11. Generate a keystore on the fly — no secrets needed ────────────
+      # ── 12. Generate keystore on the fly ──────────────────────────────────
       - name: Generate keystore
         run: |
           keytool -genkey -v \
@@ -119,7 +126,7 @@ jobs:
             -keypass thunderfinder \
             -dname "CN=ThunderFinder, OU=App, O=ThunderFinder, L=Unknown, S=Unknown, C=US"
 
-      # ── 12. Inject signing config into build.gradle ───────────────────────
+      # ── 13. Inject signing config into build.gradle ───────────────────────
       - name: Configure release signing
         run: |
           GRADLE="android/app/build.gradle"
@@ -136,16 +143,16 @@ jobs:
           sed -i "s|android {|android {\n${SIGNING_CONFIG}|" "$GRADLE"
           sed -i "s|buildTypes {|buildTypes {\n        release {\n            signingConfig signingConfigs.release\n            minifyEnabled false\n            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'\n        }|" "$GRADLE"
 
-      # ── 13. Make gradlew executable ───────────────────────────────────────
+      # ── 14. Make gradlew executable ───────────────────────────────────────
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # ── 14. Build signed release APK ──────────────────────────────────────
+      # ── 15. Build signed release APK ──────────────────────────────────────
       - name: Build Release APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
 
-      # ── 15. Rename & upload ───────────────────────────────────────────────
+      # ── 16. Rename & upload ───────────────────────────────────────────────
       - name: Rename APK
         run: |
           mv android/app/build/outputs/apk/release/app-release.apk \
