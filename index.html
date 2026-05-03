@@ -334,6 +334,21 @@
         .brutalist-select:focus {
             border-color: var(--electric-yellow);
         }
+        
+        /* Checkbox styling */
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 5px;
+        }
+        
+        input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: var(--electric-yellow);
+            cursor: pointer;
+        }
 
     </style>
 </head>
@@ -373,6 +388,14 @@
                 <option value="">Default/Auto Mic</option>
             </select>
             <button class="btn btn-small" style="margin-top: 10px; width: 100%;" onclick="populateDevices()">Scan Devices</button>
+        </div>
+        
+        <div class="setting-group">
+            <label>Auto-Weather Alerts</label>
+            <div class="checkbox-container">
+                <input type="checkbox" id="weather-toggle" onchange="handleWeatherToggle(this)">
+                <span style="font-size: 0.8rem; color: var(--text-dim); text-transform: none;">Notify when a storm is near (Checks every 20m)</span>
+            </div>
         </div>
 
         <div class="setting-group">
@@ -440,6 +463,11 @@
         let analyser = null;
         let microphone = null;
 
+        // Weather alert variables
+        let weatherInterval = null;
+        const CHECK_INTERVAL_MS = 20 * 60 * 1000; // 20 Minutes
+        let lastNotifiedTime = 0; // Prevent spamming notifications
+
         // UI Elements
         const videoElement = document.getElementById('camera-feed');
         const canvasElement = document.getElementById('canvas-feed');
@@ -455,6 +483,16 @@
         const micSelect = document.getElementById('mic-select');
         const getMicThreshold = () => parseInt(document.getElementById('mic-slider').value);
         const getFlashThreshold = () => parseInt(document.getElementById('flash-slider').value);
+        const weatherToggle = document.getElementById('weather-toggle');
+
+        // Initialize App Saved States
+        window.onload = () => {
+            const alertsEnabled = localStorage.getItem('thunderAlerts') === 'true';
+            weatherToggle.checked = alertsEnabled;
+            if (alertsEnabled) {
+                startWeatherService();
+            }
+        };
 
         // Navigation
         function nav(screenId) {
@@ -468,6 +506,100 @@
                 populateDevices();
             }
         }
+
+        // --- WEATHER ALERT SYSTEM ---
+        function handleWeatherToggle(checkbox) {
+            if (checkbox.checked) {
+                // Request permissions
+                if ("Notification" in window) {
+                    Notification.requestPermission().then(permission => {
+                        if (permission === "granted") {
+                            localStorage.setItem('thunderAlerts', 'true');
+                            startWeatherService();
+                            // Run an initial check immediately when turned on
+                            checkWeatherForThunder(); 
+                        } else {
+                            alert("Notification permissions denied. Alerts cannot be enabled.");
+                            checkbox.checked = false;
+                        }
+                    });
+                } else {
+                    alert("Your browser does not support notifications.");
+                    checkbox.checked = false;
+                }
+            } else {
+                localStorage.setItem('thunderAlerts', 'false');
+                if (weatherInterval) clearInterval(weatherInterval);
+            }
+        }
+
+        function startWeatherService() {
+            if (weatherInterval) clearInterval(weatherInterval);
+            weatherInterval = setInterval(checkWeatherForThunder, CHECK_INTERVAL_MS);
+        }
+
+        function triggerNotification() {
+            // Prevent spamming the user multiple times an hour
+            if (Date.now() - lastNotifiedTime < 3600000) return; // 1 hour cooldown
+            
+            const notification = new Notification("⚡ Thunderstorm Incoming!", {
+                body: "A thunderstorm has been detected in your area. Tap to open ThunderFinder.",
+                vibrate: [200, 100, 200]
+            });
+
+            notification.onclick = function() {
+                window.focus();
+                this.close();
+            };
+
+            lastNotifiedTime = Date.now();
+        }
+
+        function checkWeatherForThunder() {
+            if (!("geolocation" in navigator)) return;
+
+            navigator.geolocation.getCurrentPosition(async (position) => {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&models=best_match&minutely_15=weather_code&timezone=auto&forecast_days=1`;
+
+                try {
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    if (!data.minutely_15 || !data.minutely_15.weather_code) return;
+
+                    const now = new Date();
+                    const times = data.minutely_15.time;
+                    const codes = data.minutely_15.weather_code;
+                    const thunderCodes = [95, 96, 97, 98, 99];
+                    
+                    // Find the index of the closest current time
+                    let currentIndex = times.findIndex(t => new Date(t) > now) || 0;
+                    if (currentIndex === -1) currentIndex = 0;
+
+                    // Check the current 15 min block and the next 3 blocks (1 hour window)
+                    let stormIncoming = false;
+                    for (let i = currentIndex; i < currentIndex + 4 && i < codes.length; i++) {
+                        if (thunderCodes.includes(codes[i])) {
+                            stormIncoming = true;
+                            break;
+                        }
+                    }
+
+                    if (stormIncoming) {
+                        triggerNotification();
+                    }
+
+                } catch (err) {
+                    console.error("Failed to fetch weather data for alerts:", err);
+                }
+            }, (err) => {
+                console.warn("Location access denied or failed for weather alerts.");
+            });
+        }
+        // ----------------------------
+
 
         // Hardware Device Enumeration
         async function populateDevices() {
