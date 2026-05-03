@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Java 21 (required by latest Capacitor Android) ─────────────────
+      # ── 2. Java 21 ────────────────────────────────────────────────────────
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -56,6 +56,8 @@ jobs:
           cp index.html www/index.html
 
       # ── 8. Capacitor config ───────────────────────────────────────────────
+      #       allowMixedContent + mediaPlaybackRequiresUserGesture = false
+      #       are both required for getUserMedia to work inside a WebView
       - name: Create Capacitor config
         run: |
           cat > capacitor.config.json << 'EOF'
@@ -64,9 +66,13 @@ jobs:
             "appName": "ThunderFinder",
             "webDir": "www",
             "android": {
-              "buildOptions": {
-                "minSdkVersion": 23,
-                "targetSdkVersion": 34
+              "allowMixedContent": true,
+              "captureInput": true,
+              "webContentsDebuggingEnabled": false
+            },
+            "plugins": {
+              "CapacitorHttp": {
+                "enabled": true
               }
             }
           }
@@ -79,7 +85,7 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # ── 10. Inject permissions via Python (safe XML editing) ──────────────
+      # ── 10. Patch AndroidManifest – permissions ────────────────────────────
       - name: Patch AndroidManifest – permissions
         run: |
           python3 << 'PYEOF'
@@ -100,6 +106,7 @@ jobs:
               'android.permission.ACCESS_BACKGROUND_LOCATION',
               'android.permission.CAMERA',
               'android.permission.RECORD_AUDIO',
+              'android.permission.MODIFY_AUDIO_SETTINGS',
           ]
 
           existing = {
@@ -128,7 +135,42 @@ jobs:
           print("Manifest patched successfully.")
           PYEOF
 
-      # ── 11. Replace launcher icons ────────────────────────────────────────
+      # ── 11. Patch MainActivity to enable WebView camera/mic access ─────────
+      #        Android WebView blocks getUserMedia unless the host Activity
+      #        overrides onPermissionRequest and grants it programmatically.
+      - name: Patch MainActivity for WebView media permissions
+        run: |
+          MAIN="android/app/src/main/java/com/thunderfinder/app/MainActivity.java"
+
+          cat > "$MAIN" << 'EOF'
+          package com.thunderfinder.app;
+
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+          import android.os.Bundle;
+
+          public class MainActivity extends BridgeActivity {
+
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  // Override WebChromeClient so the WebView forwards
+                  // camera/mic permission requests to the OS instead of blocking them
+                  WebView webView = getBridge().getWebView();
+                  webView.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onPermissionRequest(final PermissionRequest request) {
+                          runOnUiThread(() -> request.grant(request.getResources()));
+                      }
+                  });
+              }
+          }
+          EOF
+
+      # ── 12. Replace launcher icons ────────────────────────────────────────
       - name: Replace launcher icons
         run: |
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
@@ -145,7 +187,7 @@ jobs:
             convert www/icon.png -resize "${SIZE}x${SIZE}" "${DIR}/ic_launcher_round.png"
           done
 
-      # ── 12. Generate keystore on the fly ──────────────────────────────────
+      # ── 13. Generate keystore on the fly ──────────────────────────────────
       - name: Generate keystore
         run: |
           keytool -genkey -v \
@@ -158,7 +200,7 @@ jobs:
             -keypass thunderfinder \
             -dname "CN=ThunderFinder, OU=App, O=ThunderFinder, L=Unknown, S=Unknown, C=US"
 
-      # ── 13. Inject signing config into build.gradle ───────────────────────
+      # ── 14. Inject signing config into build.gradle ───────────────────────
       - name: Configure release signing
         run: |
           python3 << 'PYEOF'
@@ -194,16 +236,16 @@ jobs:
           print("build.gradle patched successfully.")
           PYEOF
 
-      # ── 14. Make gradlew executable ───────────────────────────────────────
+      # ── 15. Make gradlew executable ───────────────────────────────────────
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # ── 15. Build signed release APK ──────────────────────────────────────
+      # ── 16. Build signed release APK ──────────────────────────────────────
       - name: Build Release APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
 
-      # ── 16. Rename & upload ───────────────────────────────────────────────
+      # ── 17. Rename & upload ───────────────────────────────────────────────
       - name: Rename APK
         run: |
           mv android/app/build/outputs/apk/release/app-release.apk \
