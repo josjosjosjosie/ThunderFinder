@@ -1,1 +1,159 @@
+name: Build ThunderFinder Release APK
 
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout repo ──────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Java ───────────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. Node.js ────────────────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── 4. Android SDK ────────────────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licences
+        run: yes | sdkmanager --licenses || true
+
+      # ── 5. Install Capacitor ──────────────────────────────────────────────
+      - name: Install Capacitor CLI and dependencies
+        run: |
+          npm install -g @capacitor/cli
+          npm init -y
+          npm install @capacitor/core @capacitor/android @capacitor/geolocation
+
+      # ── 6. Prepare assets ─────────────────────────────────────────────────
+      - name: Prepare app icon and web assets
+        run: |
+          mkdir -p www
+          cp 1777814476566_2.png www/icon.png
+          cp index.html www/index.html
+
+      # ── 7. Capacitor config ───────────────────────────────────────────────
+      - name: Create Capacitor config
+        run: |
+          cat > capacitor.config.json << 'EOF'
+          {
+            "appId": "com.thunderfinder.app",
+            "appName": "ThunderFinder",
+            "webDir": "www",
+            "android": {
+              "buildOptions": {
+                "minSdkVersion": 23,
+                "targetSdkVersion": 34
+              }
+            },
+            "plugins": {
+              "Geolocation": {
+                "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION"]
+              }
+            }
+          }
+          EOF
+
+      # ── 8. Add & sync Android platform ───────────────────────────────────
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # ── 9. Permissions ────────────────────────────────────────────────────
+      - name: Patch AndroidManifest – permissions
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          PERMISSIONS='    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n\
+            <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n\
+            <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />\n\
+            <uses-permission android:name="android.permission.CAMERA" />\n\
+            <uses-feature android:name="android.hardware.camera" android:required="false" />\n\
+            <uses-permission android:name="android.permission.RECORD_AUDIO" />'
+          sed -i "s|<manifest|${PERMISSIONS}\n<manifest|" "$MANIFEST"
+
+      # ── 10. Replace launcher icons ────────────────────────────────────────
+      - name: Replace launcher icons
+        run: |
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            case $density in
+              mdpi)    SIZE=48  ;;
+              hdpi)    SIZE=72  ;;
+              xhdpi)   SIZE=96  ;;
+              xxhdpi)  SIZE=144 ;;
+              xxxhdpi) SIZE=192 ;;
+            esac
+            DIR="android/app/src/main/res/mipmap-${density}"
+            mkdir -p "$DIR"
+            convert www/icon.png -resize "${SIZE}x${SIZE}" "${DIR}/ic_launcher.png"
+            convert www/icon.png -resize "${SIZE}x${SIZE}" "${DIR}/ic_launcher_round.png"
+          done
+
+      # ── 11. Generate a keystore on the fly — no secrets needed ────────────
+      - name: Generate keystore
+        run: |
+          keytool -genkey -v \
+            -keystore android/app/thunderfinder.jks \
+            -alias thunderfinder \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass thunderfinder \
+            -keypass thunderfinder \
+            -dname "CN=ThunderFinder, OU=App, O=ThunderFinder, L=Unknown, S=Unknown, C=US"
+
+      # ── 12. Inject signing config into build.gradle ───────────────────────
+      - name: Configure release signing
+        run: |
+          GRADLE="android/app/build.gradle"
+
+          SIGNING_CONFIG='    signingConfigs {\n\
+              release {\n\
+                  storeFile file("thunderfinder.jks")\n\
+                  storePassword "thunderfinder"\n\
+                  keyAlias "thunderfinder"\n\
+                  keyPassword "thunderfinder"\n\
+              }\n\
+          }'
+
+          sed -i "s|android {|android {\n${SIGNING_CONFIG}|" "$GRADLE"
+          sed -i "s|buildTypes {|buildTypes {\n        release {\n            signingConfig signingConfigs.release\n            minifyEnabled false\n            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'\n        }|" "$GRADLE"
+
+      # ── 13. Make gradlew executable ───────────────────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      # ── 14. Build signed release APK ──────────────────────────────────────
+      - name: Build Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      # ── 15. Rename & upload ───────────────────────────────────────────────
+      - name: Rename APK
+        run: |
+          mv android/app/build/outputs/apk/release/app-release.apk \
+             android/app/build/outputs/apk/release/ThunderFinder-release.apk
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ThunderFinder-release
+          path: android/app/build/outputs/apk/release/ThunderFinder-release.apk
+          retention-days: 30
