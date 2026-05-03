@@ -147,6 +147,12 @@
             display: block;
         }
 
+        .btn-small {
+            padding: 0.5rem;
+            font-size: 0.9rem;
+            border-width: 2px;
+        }
+
         .btn:active {
             background: var(--electric-yellow);
             color: var(--bg-dark);
@@ -167,6 +173,7 @@
             margin-bottom: 1rem;
             border-bottom: 2px solid var(--text-dim);
             padding-bottom: 0.5rem;
+            flex-shrink: 0;
         }
 
         .header-bar h2 {
@@ -239,6 +246,7 @@
             margin-top: 1rem;
             border: 2px solid var(--text-dim);
             padding: 10px;
+            flex-shrink: 0;
         }
 
         .mic-bar-wrapper {
@@ -272,6 +280,7 @@
             background: var(--panel-dark);
             border: 2px solid var(--electric-yellow);
             display: none;
+            flex-shrink: 0;
         }
 
         #results-container.active {
@@ -287,7 +296,7 @@
 
         /* Settings */
         .setting-group {
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
             text-align: left;
         }
         
@@ -295,6 +304,7 @@
             display: block;
             margin-bottom: 0.5rem;
             color: var(--electric-yellow);
+            font-size: 0.9rem;
         }
 
         input[type="range"] {
@@ -306,6 +316,25 @@
             float: right;
             color: var(--text-light);
         }
+
+        .brutalist-select {
+            width: 100%;
+            background: var(--bg-dark);
+            color: var(--text-light);
+            border: 2px solid var(--text-dim);
+            padding: 10px;
+            font-family: 'Space Mono', monospace;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            outline: none;
+            appearance: none;
+            cursor: pointer;
+        }
+
+        .brutalist-select:focus {
+            border-color: var(--electric-yellow);
+        }
+
     </style>
 </head>
 <body>
@@ -336,6 +365,17 @@
         </div>
 
         <div class="setting-group">
+            <label>Hardware Selection</label>
+            <select id="camera-select" class="brutalist-select" style="margin-bottom: 10px;">
+                <option value="">Default/Auto Camera</option>
+            </select>
+            <select id="mic-select" class="brutalist-select">
+                <option value="">Default/Auto Mic</option>
+            </select>
+            <button class="btn btn-small" style="margin-top: 10px; width: 100%;" onclick="populateDevices()">Scan Devices</button>
+        </div>
+
+        <div class="setting-group">
             <label>Mic Sensitivity <span id="mic-val" class="val-display">25</span></label>
             <input type="range" id="mic-slider" min="1" max="100" value="25" oninput="document.getElementById('mic-val').innerText = this.value">
             <p style="font-size: 0.7rem; color: var(--text-dim); margin-top: 5px;">Suggest 20-25. Adjust based on environment.</p>
@@ -346,8 +386,8 @@
             <input type="range" id="flash-slider" min="10" max="150" value="50" oninput="document.getElementById('flash-val').innerText = this.value">
         </div>
 
-        <div class="btn-container" style="margin-top: auto;">
-            <button class="btn btn-primary" onclick="nav('home-screen')">Save</button>
+        <div class="btn-container" style="margin-top: auto; padding-top: 20px;">
+            <button class="btn btn-primary" onclick="nav('home-screen')">Save & Exit</button>
         </div>
     </div>
 
@@ -392,6 +432,7 @@
         let flashTime = 0;
         let prevBrightness = null;
         let animationFrameId = null;
+        let devicesPopulated = false;
 
         // Hardware streams
         let videoStream = null;
@@ -409,7 +450,9 @@
         const flashFx = document.getElementById('flash-fx');
         const resultsContainer = document.getElementById('results-container');
         
-        // Settings
+        // Settings Elements
+        const camSelect = document.getElementById('camera-select');
+        const micSelect = document.getElementById('mic-select');
         const getMicThreshold = () => parseInt(document.getElementById('mic-slider').value);
         const getFlashThreshold = () => parseInt(document.getElementById('flash-slider').value);
 
@@ -418,9 +461,44 @@
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             document.getElementById(screenId).classList.add('active');
             
-            // Update threshold UI line on open
             if(screenId === 'tracker-screen') {
                 document.getElementById('mic-threshold-line').style.left = getMicThreshold() + '%';
+            }
+            if(screenId === 'settings-screen' && !devicesPopulated) {
+                populateDevices();
+            }
+        }
+
+        // Hardware Device Enumeration
+        async function populateDevices() {
+            try {
+                // Request temporary permission to get readable device labels
+                const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                tempStream.getTracks().forEach(track => track.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                
+                // Clear existing options except default
+                camSelect.innerHTML = '<option value="">Default/Auto Camera</option>';
+                micSelect.innerHTML = '<option value="">Default/Auto Mic</option>';
+
+                devices.forEach(device => {
+                    if (device.kind === 'videoinput') {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.text = device.label || `Camera ${camSelect.length}`;
+                        camSelect.appendChild(option);
+                    } else if (device.kind === 'audioinput') {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.text = device.label || `Microphone ${micSelect.length}`;
+                        micSelect.appendChild(option);
+                    }
+                });
+                
+                devicesPopulated = true;
+            } catch (err) {
+                console.warn("Could not enumerate devices automatically. Permissions may be blocked.", err);
             }
         }
 
@@ -432,14 +510,19 @@
             prevBrightness = null;
 
             try {
-                // Init Camera (Environment facing preferred)
-                videoStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment' } 
-                });
+                // Determine constraints based on settings selection
+                const selectedCamId = camSelect.value;
+                const selectedMicId = micSelect.value;
+
+                const videoConstraints = selectedCamId ? { deviceId: { exact: selectedCamId } } : { facingMode: 'environment' };
+                const audioConstraints = selectedMicId ? { deviceId: { exact: selectedMicId } } : true;
+
+                // Init Camera 
+                videoStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
                 videoElement.srcObject = videoStream;
                 
                 // Init Microphone
-                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
